@@ -109,7 +109,7 @@ def _vertical_crop(mat, rng):
     return mat[:, x0:x0 + cw]
 
 
-def place_smoke(img, lib, cx, cy, tw_frac, rng, sooty_p=0.45):
+def place_smoke(img, lib, cx, cy, tw_frac, rng, sooty_p=0.45, thin=False):
     """연기 기둥 배치. 밑동을 (cx,cy)에 두고 위로 뻗는다.
 
     배경 밝기에 따라 검댕/흰 연기를 고르고, 합성 후 실제로 보이는지 검사한다.
@@ -117,11 +117,12 @@ def place_smoke(img, lib, cx, cy, tw_frac, rng, sooty_p=0.45):
     """
     H, W = img.shape[:2]
     mat = _vertical_crop(cv2.imread(rng.choice(lib), cv2.IMREAD_UNCHANGED), rng)
-    sm, al = _fit(mat, tw_frac * W, rng, stretch=(1.1, 2.4))   # 연기는 세로로 길다
+    sm, al = _fit(mat, tw_frac * W, rng, stretch=(1.2, 2.8))   # 연기는 세로로 길다
 
     # 아티팩트 무작위화 — 화염과 같은 취지
+    # thin: 조리 규모의 얇고 옅은 연기. 감마를 올려 옅게, 블러를 줄여 실 구조를 남긴다.
     al = np.clip(al, 0, 1) ** rng.uniform(.75, 1.6)
-    k = rng.uniform(0.4, 2.4)                                   # 연기는 경계가 더 흐리다
+    k = rng.uniform(0.2, 1.0) if thin else rng.uniform(0.4, 2.4)
     al = cv2.GaussianBlur(al, (0, 0), k)
     sm = cv2.GaussianBlur(sm, (0, 0), k * .8)
 
@@ -134,14 +135,15 @@ def place_smoke(img, lib, cx, cy, tw_frac, rng, sooty_p=0.45):
     roi = img[y0:y1, x0:x1]
     bgl = float(roi.mean())
     p_soot = np.clip(sooty_p + (bgl - 0.45) * 1.1, 0.05, 0.95)
+    lo, hi = (.55, .95)
     if rng.random() < p_soot:
         sm = sm * rng.uniform(.16, .52)                         # 검댕
         sm = np.clip(sm * np.array([rng.uniform(.94, 1.06),
                                     rng.uniform(.96, 1.04), 1.], np.float32), 0, 1)
-        al = al * rng.uniform(.50, .95)
+        al = al * rng.uniform(lo, hi)
     else:
         sm = np.clip(sm * rng.uniform(.98, 1.14), 0, 1)         # 흰 연기
-        al = al * rng.uniform(.55, .95)
+        al = al * rng.uniform(lo, hi)
 
     op = np.clip(al, 0, 1)[..., None]
     before = roi.copy()
@@ -180,7 +182,8 @@ def write(root, img, boxes, name):
                     f'{(x1-x0)/W:.6f} {(y1-y0)/H:.6f}\n')
 
 
-def scene(bg, flib, slib, cx, cy, vw, rng, haze_p, mode):
+def scene(bg, flib, slib, cx, cy, vw, rng, haze_p, mode, thin_p=0.0,
+          w_thin=(0.25, 0.80), w_thick=(0.45, 1.25)):
     """mode: 'smoke' | 'fire_smoke' | 'fire'"""
     img = bg.astype(np.float32) / 255
     boxes = []
@@ -194,9 +197,11 @@ def scene(bg, flib, slib, cx, cy, vw, rng, haze_p, mode):
     if mode in ('smoke', 'fire_smoke'):
         # 발화 시엔 화염 위에서, 과열 시엔 조리기구 표면에서 피어오른다
         lift = rng.uniform(.03, .10) if mode == 'fire_smoke' else rng.uniform(-.01, .03)
+        thin = rng.random() < thin_p
+        wr = w_thin if thin else w_thick
         bb = place_smoke(img, slib, cx + rng.uniform(-.12, .12) * vw, cy - lift,
-                         vw * rng.uniform(.45, 1.25), rng,
-                         sooty_p=.55 if mode == 'fire_smoke' else .35)
+                         vw * rng.uniform(*wr), rng,
+                         sooty_p=.55 if mode == 'fire_smoke' else .35, thin=thin)
         if bb is None:
             return None, None
         boxes.append((SMOKE, bb))
@@ -214,11 +219,15 @@ def main():
     ap.add_argument('--haze-prob', type=float, default=0.5)
     ap.add_argument('--p-smoke', type=float, default=0.35, help='연기만 있는 장면 비율')
     ap.add_argument('--p-fire-smoke', type=float, default=0.40, help='화염+연기 비율')
+    ap.add_argument('--smokelib', default='smokelib',
+                    help="연기 소재 폴더명 (7회차는 smokelib_thin)")
+    ap.add_argument('--thin-prob', type=float, default=0.0,
+                    help='조리 규모의 얇고 옅은 연기 비율 (7회차는 0.7)')
     ap.add_argument('--seed', type=int, default=20260804)
     a = ap.parse_args()
 
     flib = sorted(glob.glob(f'{a.assets}/flamelib/*.webp'))
-    slib = sorted(glob.glob(f'{a.assets}/smokelib/*.webp'))
+    slib = sorted(glob.glob(f'{a.assets}/{a.smokelib}/*.webp'))
     anch = json.load(open(f'{a.assets}/anchors.json'))
     assert flib and slib and anch, '소재를 찾을 수 없습니다 — --assets 경로를 확인하세요'
     rng = np.random.default_rng(a.seed)
@@ -240,7 +249,7 @@ def main():
         bg = cv2.imread(f'{a.assets}/bases/{n}')
         for v in range(a.variants):
             m = pick()
-            out, boxes = scene(bg, flib, slib, cx, cy, vw, rng, a.haze_prob, m)
+            out, boxes = scene(bg, flib, slib, cx, cy, vw, rng, a.haze_prob, m, a.thin_prob)
             if out is None:
                 continue
             write(a.out, out, boxes, f'k{bi:03d}_{v:02d}_{m}')
@@ -258,7 +267,7 @@ def main():
                 continue
             m = pick()
             out, boxes = scene(bg, flib, slib, rng.uniform(.2, .8), rng.uniform(.55, .95),
-                               rng.uniform(.10, .40), rng, a.haze_prob, m)
+                               rng.uniform(.10, .40), rng, a.haze_prob, m, a.thin_prob)
             if out is None:
                 continue
             write(a.out, out, boxes, f'd{i:04d}_{m}')

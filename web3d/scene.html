@@ -477,6 +477,34 @@ function setStage(s){ stage=s; document.getElementById('note').textContent=NOTES
   [0,1,2].forEach(i=>document.getElementById('s'+i).className = i===s?'on':''); }
 [0,1,2].forEach(i=>document.getElementById('s'+i).onclick=()=>{ setStage(i); log('단계 → '+NOTES[i].split('.')[0]); });
 
+
+// ---------- 정답 박스 추출 (화염만 렌더 → 밝은 화소의 외접 박스) ----------
+const mcan = document.createElement('canvas'); mcan.width=W; mcan.height=H;
+const mctx = mcan.getContext('2d', {willReadFrequently:true});
+function gtBox(){
+  const flameSet = new Set();
+  procFlames.forEach(o=>flameSet.add(o.m));
+  sprites.forEach(o=>flameSet.add(o.sp));
+  const saved = [];
+  scene.traverse(o=>{ if(o.isMesh||o.isPoints||o.isSprite){ saved.push([o,o.visible]);
+                      if(!flameSet.has(o)) o.visible=false; } });
+  const bg = scene.background;
+  scene.background = new THREE.Color(0x000000);
+  const fi = fireLight.intensity; fireLight.intensity = 0;
+  renderer.render(scene,camera);
+  mctx.drawImage(renderer.domElement,0,0);
+  const d = mctx.getImageData(0,0,W,H).data;
+  let x0=1e9,y0=1e9,x1=-1,y1=-1,n=0;
+  for(let y=0;y<H;y++){ for(let x=0;x<W;x++){
+    const i=(y*W+x)*4;
+    if(d[i]*0.30+d[i+1]*0.60+d[i+2]*0.10 > 26){
+      n++; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } } }
+  saved.forEach(([o,v])=>o.visible=v);
+  scene.background = bg; fireLight.intensity = fi;
+  renderer.render(scene,camera);
+  return n>60 ? [x0,y0,x1,y1,n] : null;
+}
+
 const shot=()=>renderer.domElement.toDataURL('image/jpeg',0.92).split(',')[1];
 document.getElementById('cap').onclick=()=>{ const a=document.createElement('a');
   a.href='data:image/jpeg;base64,'+shot(); a.download='shot_'+Date.now()+'.jpg'; a.click(); log('1장 캡처'); };
@@ -519,13 +547,16 @@ document.getElementById('auto').onclick=async ev=>{
   const btn=ev.target; btn.disabled=true;
   RND = mulberry32(20260804);          // 두 모드가 완전히 같은 씬·구도를 보도록 고정 시드
   const zip=new JSZip(), F=zip.folder('fire'), S=zip.folder('smoke'), N=zip.folder('normal');
+  const GTS = {}; let gtMiss = 0;
   const NF=100, NS=20, NN=30;
   log('자동 캡처 시작 — '+(FLAMEMODE==='proc'?'절차적 화염':'실사 아틀라스'));
   for(let i=0;i<NF;i++){ setStage(2); randomizeScene();
     setv('fire',R(0.40,1.70).toFixed(2)); setv('gas',R(0.4,1.7).toFixed(2));
     fireScale=+document.getElementById('fire').value;
     power=+document.getElementById('gas').value; randomView(); await wait(26);
-    F.file(`fire_${String(i).padStart(3,'0')}.jpg`, shot(), {base64:true});
+    const fn = `fire_${String(i).padStart(3,'0')}.jpg`;
+    const gb = gtBox(); if(gb) GTS[fn]=gb.slice(0,4); else gtMiss++;
+    F.file(fn, shot(), {base64:true});
     if(i%25===24) log(`발화 ${i+1}/${NF}`); }
   for(let i=0;i<NS;i++){ setStage(1); randomizeScene();
     setv('gas',R(0.6,1.75).toFixed(2)); power=+document.getElementById('gas').value;
@@ -536,6 +567,8 @@ document.getElementById('auto').onclick=async ev=>{
     setv('gas',R(0.3,1.75).toFixed(2)); power=+document.getElementById('gas').value;
     randomView(); await wait(16);
     N.file(`normal_${String(i).padStart(3,'0')}.jpg`, shot(), {base64:true}); }
+  zip.file('labels.json', JSON.stringify({mode:FLAMEMODE, w:W, h:H, boxes:GTS}, null, 1));
+  log(`정답 박스 ${Object.keys(GTS).length}/${NF}${gtMiss?(' · 추출 실패 '+gtMiss):''}`);
   log('정상 '+NN+'/'+NN+' · 압축 중…');
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);

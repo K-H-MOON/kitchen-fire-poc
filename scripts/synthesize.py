@@ -101,6 +101,7 @@ def write(root, img, bb, name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--assets', default='assets')
+    ap.add_argument('--flamelib', default='flamelib', help='소재 폴더명 (9회차: flamelib2)')
     ap.add_argument('--out', default='ds')
     ap.add_argument('--variants', type=int, default=13, help='주방 베이스 1장당 합성 횟수')
     ap.add_argument('--dfire-bg-list', help='주방 밖 배경 이미지 경로 목록 (한 줄에 하나)')
@@ -110,7 +111,7 @@ def main():
     ap.add_argument('--seed', type=int, default=20260803)
     a = ap.parse_args()
 
-    lib = sorted(glob.glob(f'{a.assets}/flamelib/*.webp'))
+    lib = sorted(glob.glob(f'{a.assets}/{a.flamelib}/*.webp'))
     anch = json.load(open(f'{a.assets}/anchors.json'))
     assert lib and anch, '소재를 찾을 수 없습니다 — --assets 경로를 확인하세요'
     rng = np.random.default_rng(a.seed)

@@ -1,0 +1,28 @@
+{
+  "camera_id": "gaewon-01",
+  "frame_size": [800, 450],
+  "stations": [
+    {
+      "id": "fryer-1",
+      "type": "fryer",
+      "bbox_xyxy": [330, 5, 566, 150],
+      "note": "식용유 튀김솥. 주 대응 대상"
+    },
+    {
+      "id": "basket-area",
+      "type": "staging",
+      "bbox_xyxy": [150, 250, 530, 440],
+      "note": "튀김 바구니·카트 구역. 화구는 아니나 화재 시 대응이 다름"
+    }
+  ],
+  "excluded": [
+    {
+      "id": "pot-3",
+      "reason": "미사용 화구. 기름 없음. 사용 시작하면 추가할 것"
+    },
+    {
+      "id": "robot-arm",
+      "reason": "8단계에서 로봇 정지 판단에 필요해지면 추가할 것"
+    }
+  ]
+}
